@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AskStatus {
+  PENDING
+  FULFILLED
+}
+
+model Member {
+  id   String @id @default(cuid())
+  name String
+  asks Ask[]
+}
+
+model Ask {
+  id        String    @id @default(cuid())
+  title     String
+  status    AskStatus @default(PENDING)
+  ownerId   String?
+  owner     Member?   @relation(fields: [ownerId], references: [id])
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Upload {
+  id           String   @id @default(cuid())
+  fileUrl      String
+  fileType     String
+  detectedType String?
+  createdAt    DateTime @default(now())
+}
+
+model Referral {
+  id           String   @id @default(cuid())
+  fromName     String
+  toName       String
+  description  String?
+  sourceType   String
+  chapterType  String
+  status       String?
+  temperature  String?
+  phone        String?
+  email        String?
+  address      String?
+  comments     String?
+  amount       Float?
+  date         DateTime?
+  fromMemberId String?
+  toMemberId   String?
+  uploadId     String
+  createdAt    DateTime @default(now())
+}
