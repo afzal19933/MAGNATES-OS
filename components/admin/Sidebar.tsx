@@ -9,11 +9,11 @@ type SidebarProps = {
 };
 
 const menuItems = [
-  { label: "Dashboard", href: "/dashboard" },
-  { label: "Scoring Rules", href: "/scoring-rules" },
-  { label: "Configuration", href: "/configuration" },
-  { label: "Leaderboard", href: "/leaderboard" },
-  { label: "Activity Upload", href: "/activity-upload" },
+  { label: "Dashboard", href: "/admin/dashboard" },
+  { label: "Scoring Rules", href: "/admin/scoring-rules" },
+  { label: "Configuration", href: "/admin/configuration" },
+  { label: "Leaderboard", href: "/admin/leaderboard" },
+  { label: "Activity Upload", href: "/admin/activity-upload" },
 ];
 
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {

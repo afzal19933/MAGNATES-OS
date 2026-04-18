@@ -67,8 +67,6 @@ export async function POST(request: Request) {
           detectedType = "TYFCB";
         }
 
-        console.log(rows);
-        console.log("Detected Type:", detectedType);
       }
     }
 
@@ -114,8 +112,6 @@ export async function POST(request: Request) {
           : "SAME_CHAPTER";
         const fromMemberId = findMemberId(fromName);
         const toMemberId = findMemberId(toName);
-
-        console.log({ fromName, fromMemberId, toName, toMemberId });
 
         if (!fromName || !toName) continue;
 

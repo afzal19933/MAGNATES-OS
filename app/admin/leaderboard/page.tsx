@@ -31,9 +31,6 @@ const viewOptions: Array<{ label: string; value: LeaderboardView }> = [
 ];
 
 function getPositionLabel(rank: number) {
-  if (rank === 1) return "🥇";
-  if (rank === 2) return "🥈";
-  if (rank === 3) return "🥉";
   return String(rank);
 }
 
@@ -181,7 +178,8 @@ export default function LeaderboardPage() {
               Leaderboard Results
             </h2>
             <p className="text-sm text-slate-500">
-              Showing: {view === "team" ? "Team Leaderboard" : "Member Leaderboard"}
+              Showing:{" "}
+              {view === "team" ? "Team Leaderboard" : "Member Leaderboard"}
             </p>
           </div>
 
@@ -236,7 +234,9 @@ export default function LeaderboardPage() {
                         <Fragment key={item.id}>
                           <tr
                             onClick={() =>
-                              setExpandedRow(expandedRow === item.id ? null : item.id)
+                              setExpandedRow(
+                                expandedRow === item.id ? null : item.id
+                              )
                             }
                             className={`cursor-pointer select-none border-b border-slate-100 transition-all duration-150 hover:bg-slate-100 ${rowClassName}`}
                           >
@@ -245,7 +245,7 @@ export default function LeaderboardPage() {
                             </td>
                             <td className="px-4 py-3 font-medium text-slate-900">
                               <span className="mr-2 text-slate-400">
-                                {expandedRow === item.id ? "▼" : "▶"}
+                                {expandedRow === item.id ? "v" : ">"}
                               </span>
                               {label}
                             </td>
@@ -271,8 +271,14 @@ export default function LeaderboardPage() {
                                   >
                                     <div className="space-y-2 px-6 py-4 text-sm text-slate-600">
                                       {Object.entries(item.breakdown).map(
-                                        ([key, value], breakdownIndex, breakdownEntries) => {
-                                          const valueClassName = key.includes("referral")
+                                        (
+                                          [key, value],
+                                          breakdownIndex,
+                                          breakdownEntries
+                                        ) => {
+                                          const valueClassName = key.includes(
+                                            "referral"
+                                          )
                                             ? "font-medium text-slate-900"
                                             : key.includes("visitor")
                                               ? "text-blue-600"
@@ -281,14 +287,16 @@ export default function LeaderboardPage() {
                                                 : "text-slate-600";
 
                                           const isLast =
-                                            breakdownIndex === breakdownEntries.length - 1;
+                                            breakdownIndex ===
+                                            breakdownEntries.length - 1;
 
                                           return (
                                             <div
                                               key={key}
                                               className={clsx(
                                                 "flex justify-between rounded-md px-2 py-1.5 transition-all duration-300 ease-in-out hover:bg-slate-100/50",
-                                                !isLast && "border-b border-slate-100"
+                                                !isLast &&
+                                                  "border-b border-slate-100"
                                               )}
                                             >
                                               <span className="text-slate-700">

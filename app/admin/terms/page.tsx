@@ -1,301 +1,340 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import PageHeader from "@/components/admin/PageHeader";
-import ConfirmModal from "@/components/admin/ConfirmModal";
-import CredentialsTable, {
-  type GeneratedCredential,
-} from "@/components/admin/CredentialsTable";
-import FileUpload from "@/components/admin/FileUpload";
-import PreviewTable, { type PreviewRow } from "@/components/admin/PreviewTable";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import Input from "@/components/ui/Input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/Table";
 
-type ActiveTerm = {
-  id?: number;
-  name?: string;
-  isActive?: boolean;
-} | null;
+type Term = {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+  createdAt: string;
+};
 
-type ActiveTermResponse =
-  | ActiveTerm
-  | {
-      success?: boolean;
-      data?: ActiveTerm;
-      message?: string;
-    }
-  | null;
+type TermsResponse = {
+  success: boolean;
+  data?: Term[];
+  message?: string;
+};
 
-function parseActiveTerm(response: ActiveTermResponse) {
-  if (!response) {
-    return null;
-  }
-
-  if ("data" in response) {
-    return response.data ?? null;
-  }
-
-  return response;
-}
-
-function parseWorkbook(file: File) {
-  return file.arrayBuffer().then((buffer) => {
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const sheetName = workbook.SheetNames[0];
-
-    if (!sheetName) {
-      throw new Error("No worksheet found in the uploaded file.");
-    }
-
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-      defval: "",
-    });
-
-    return rows;
-  });
-}
+type User = {
+  id: string;
+  name: string;
+};
 
 export default function TermsPage() {
   const [termName, setTermName] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
-  const [credentials, setCredentials] = useState<GeneratedCredential[]>([]);
-  const [activeTerm, setActiveTerm] = useState<ActiveTerm>(null);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [terms, setTerms] = useState<Term[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-  const [isParsing, setIsParsing] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
+  const [assignForm, setAssignForm] = useState<{
+    userId: string;
+    role: string;
+    loading: boolean;
+    successMessage: string | null;
+    errorMessage: string | null;
+  }>({
+    userId: "",
+    role: "MEMBER",
+    loading: false,
+    successMessage: null,
+    errorMessage: null,
+  });
+  const [users, setUsers] = useState<User[]>([]);
+  const [isUsersLoading, setIsUsersLoading] = useState(true);
 
-  const hasRequiredColumns = useMemo(() => {
-    if (previewRows.length === 0) {
-      return true;
+  const activeTerm = useMemo(
+    () => terms.find((term) => term.isActive) || null,
+    [terms]
+  );
+
+  async function fetchTerms() {
+    setIsLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/terms", { cache: "no-store" });
+      const result = (await response.json()) as TermsResponse;
+
+      if (!response.ok || !result.success) {
+        setTerms([]);
+        setError(result.message || "Failed to load terms.");
+        return;
+      }
+
+      setTerms(Array.isArray(result.data) ? result.data : []);
+    } catch {
+      setTerms([]);
+      setError("Failed to load terms.");
+    } finally {
+      setIsLoading(false);
     }
-
-    return previewRows.every((row) => "Name" in row.raw && "Role" in row.raw);
-  }, [previewRows]);
-
-  const hasInvalidRows = previewRows.some((row) => !row.isValid);
+  }
 
   useEffect(() => {
-    async function fetchActiveTerm() {
-      try {
-        const response = await fetch("/api/terms/active", {
-          cache: "no-store",
-        });
+    void fetchTerms();
+  }, []);
 
+  useEffect(() => {
+    async function fetchUsers() {
+      setIsUsersLoading(true);
+      try {
+        const response = await fetch("/api/users", { cache: "no-store" });
         if (!response.ok) {
+          setUsers([]);
           return;
         }
 
-        const result = (await response.json()) as ActiveTermResponse;
-        setActiveTerm(parseActiveTerm(result));
-      } catch {
-        setActiveTerm(null);
+        const data = (await response.json()) as User[];
+        setUsers(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.error("Failed to fetch users:", error);
+        setUsers([]);
+      } finally {
+        setIsUsersLoading(false);
       }
     }
 
-    void fetchActiveTerm();
+    void fetchUsers();
   }, []);
 
-  async function handleFileSelect(nextFile: File | null) {
-    setFile(nextFile);
-    setPreviewRows([]);
-    setCredentials([]);
-    setError("");
-    setSuccessMessage("");
+  async function handleCreateTerm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
-    if (!nextFile) {
+    if (isCreating) {
       return;
     }
 
-    setIsParsing(true);
-
-    try {
-      const rows = await parseWorkbook(nextFile);
-      const parsedRows: PreviewRow[] = rows.map((row, index) => {
-        const name = String(row.Name ?? "").trim();
-        const role = String(row.Role ?? "").trim();
-
-        return {
-          id: index + 1,
-          name,
-          role,
-          isValid: Boolean(name && role),
-          raw: row,
-        };
-      });
-
-      if (
-        parsedRows.length > 0 &&
-        !("Name" in parsedRows[0].raw && "Role" in parsedRows[0].raw)
-      ) {
-        setError("The uploaded file must include Name and Role columns.");
-      }
-
-      setPreviewRows(parsedRows);
-    } catch (parseError) {
-      setError(
-        parseError instanceof Error
-          ? parseError.message
-          : "Failed to parse the uploaded file."
-      );
-    } finally {
-      setIsParsing(false);
-    }
-  }
-
-  async function handleImport() {
-    if (isSubmitting) {
+    const name = termName.trim();
+    if (!name || !startDate || !endDate) {
+      setError("Term name, start date, and end date are required.");
       return;
     }
 
-    if (!termName.trim()) {
-      setError("Term name is required.");
+    if (new Date(startDate) >= new Date(endDate)) {
+      setError("Start date must be before end date.");
       return;
     }
 
-    if (!file) {
-      setError("Please upload an Excel file.");
-      return;
-    }
-
-    if (!hasRequiredColumns) {
-      setError("The uploaded file must include Name and Role columns.");
-      return;
-    }
-
-    if (previewRows.length === 0 || hasInvalidRows) {
-      setError("Please fix invalid rows before importing.");
-      return;
-    }
-
-    setIsSubmitting(true);
+    setIsCreating(true);
     setError("");
     setSuccessMessage("");
 
     try {
-      const formData = new FormData();
-      formData.append("termName", termName.trim());
-      formData.append("file", file);
-
-      const response = await fetch("/api/terms/import", {
+      const response = await fetch("/api/terms", {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name,
+          startDate,
+          endDate,
+        }),
       });
 
-      const result = (await response.json()) as
-        | GeneratedCredential[]
-        | { message?: string };
+      const result = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+      };
 
-      if (!response.ok) {
-        setError(
-          "message" in result && result.message
-            ? result.message
-            : "Import failed"
-        );
+      if (!response.ok || !result.success) {
+        setError(result.message || "Failed to create term.");
         return;
       }
 
-      setCredentials(result as GeneratedCredential[]);
-      setSuccessMessage("Term imported successfully.");
-      setFile(null);
-      setPreviewRows([]);
-      setActiveTerm({
-        name: termName.trim(),
-        isActive: true,
-      });
+      setTermName("");
+      setStartDate("");
+      setEndDate("");
+      setSuccessMessage("Term created successfully.");
+      await fetchTerms();
     } catch {
-      setError("Import failed");
+      setError("Failed to create term.");
     } finally {
-      setIsSubmitting(false);
-      setShowConfirm(false);
+      setIsCreating(false);
     }
   }
 
-  async function handleSubmitClick() {
-    if (!termName.trim()) {
-      setError("Term name is required.");
+  async function handleActivateTerm(termId: string) {
+    if (activatingId === termId) {
       return;
     }
 
-    if (!file) {
-      setError("Please upload an Excel file.");
+    const isConfirmed = window.confirm(
+      "Activate this term? This will deactivate the current active term."
+    );
+    if (!isConfirmed) {
       return;
     }
 
-    if (!hasRequiredColumns) {
-      setError("The uploaded file must include Name and Role columns.");
-      return;
-    }
-
-    if (previewRows.length === 0 || hasInvalidRows) {
-      setError("Please fix invalid rows before importing.");
-      return;
-    }
+    setActivatingId(termId);
+    setError("");
+    setSuccessMessage("");
 
     try {
-      const response = await fetch("/api/terms/active", {
-        cache: "no-store",
+      const response = await fetch(`/api/terms/${termId}/activate`, {
+        method: "POST",
       });
 
-      if (!response.ok) {
-        await handleImport();
+      const result = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+      };
+
+      if (!response.ok || !result.success) {
+        setError(result.message || "Failed to activate term.");
+        setActivatingId(null);
         return;
       }
 
-      const result = (await response.json()) as ActiveTermResponse;
-      const currentActiveTerm = parseActiveTerm(result);
-      setActiveTerm(currentActiveTerm);
-
-      if (currentActiveTerm?.isActive) {
-        setShowConfirm(true);
-        return;
-      }
-
-      await handleImport();
+      setSuccessMessage("Term activated successfully.");
+      await fetchTerms();
+      setActivatingId(null);
     } catch {
-      await handleImport();
+      setError("Failed to activate term.");
+      setActivatingId(null);
     }
   }
 
-  function handleDownloadCredentials() {
-    if (credentials.length === 0) {
+  async function handleAssignUserToActiveTerm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (assignForm.loading) {
       return;
     }
 
-    const worksheet = XLSX.utils.json_to_sheet(credentials);
-    const workbook = XLSX.utils.book_new();
+    const selectedUserId = assignForm.userId.trim();
+    const selectedRole = assignForm.role.trim();
 
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Credentials");
-    XLSX.writeFile(workbook, "term-credentials.xlsx");
+    if (!selectedUserId) {
+      setAssignForm((current) => ({
+        ...current,
+        errorMessage: "Please select a user.",
+        successMessage: null,
+      }));
+      return;
+    }
+
+    if (
+      selectedRole !== "ADMIN" &&
+      selectedRole !== "MEMBER" &&
+      selectedRole !== "VISITOR"
+    ) {
+      setAssignForm((current) => ({
+        ...current,
+        errorMessage: "Please select a valid role.",
+        successMessage: null,
+      }));
+      return;
+    }
+
+    setAssignForm((current) => ({
+      ...current,
+      loading: true,
+      errorMessage: null,
+      successMessage: null,
+    }));
+
+    try {
+      const response = await fetch("/api/terms/assign-users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId: selectedUserId,
+          role: selectedRole,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+      };
+
+      if (!response.ok || !result.success) {
+        const normalizedMessage = (result.message || "").toLowerCase();
+        const isDuplicate =
+          response.status === 409 ||
+          normalizedMessage.includes("already assigned");
+        const isNoActiveTerm =
+          normalizedMessage.includes("no active term");
+
+        setAssignForm((current) => ({
+          ...current,
+          errorMessage: isDuplicate
+            ? "User already assigned to active term"
+            : isNoActiveTerm
+              ? "No active term found"
+              : result.message || "Failed to assign user.",
+          successMessage: null,
+        }));
+        return;
+      }
+
+      setAssignForm((current) => ({
+        ...current,
+        userId: "",
+        role: "MEMBER",
+        successMessage: "User assigned successfully",
+        errorMessage: null,
+      }));
+
+      window.setTimeout(() => {
+        setAssignForm((current) => ({
+          ...current,
+          successMessage: null,
+        }));
+      }, 3000);
+    } catch {
+      setAssignForm((current) => ({
+        ...current,
+        errorMessage: "Failed to assign user.",
+        successMessage: null,
+      }));
+    } finally {
+      setAssignForm((current) => ({
+        ...current,
+        loading: false,
+      }));
+    }
   }
 
-  function handleDownloadTemplate() {
-    const worksheet = XLSX.utils.aoa_to_sheet([["Name", "Role"]]);
-    const workbook = XLSX.utils.book_new();
-
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Template");
-    XLSX.writeFile(workbook, "term-import-template.xlsx");
+  function formatDate(value: string) {
+    return new Date(value).toLocaleDateString();
   }
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Term Management"
-        description="Create a term, upload member data, preview records, and generate credentials."
+        description="Create terms, review all terms, and activate the current term."
       />
 
       <p className="text-sm text-slate-500">
-        Active Term: {activeTerm?.name || "None"}
+        Active Term: {activeTerm ? activeTerm.name : "None"}
       </p>
 
       <Card>
-        <div className="space-y-6">
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <form onSubmit={handleCreateTerm} className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <label
                 htmlFor="termName"
@@ -307,17 +346,39 @@ export default function TermsPage() {
                 id="termName"
                 value={termName}
                 onChange={(event) => setTermName(event.target.value)}
-                placeholder="Enter term name"
+                placeholder="e.g. Q3 2026"
               />
             </div>
 
-            <FileUpload
-              file={file}
-              isLoading={isParsing}
-              onFileSelect={(nextFile) => {
-                void handleFileSelect(nextFile);
-              }}
-            />
+            <div className="space-y-2">
+              <label
+                htmlFor="startDate"
+                className="text-sm font-medium text-slate-700"
+              >
+                Start Date
+              </label>
+              <Input
+                id="startDate"
+                type="date"
+                value={startDate}
+                onChange={(event) => setStartDate(event.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label
+                htmlFor="endDate"
+                className="text-sm font-medium text-slate-700"
+              >
+                End Date
+              </label>
+              <Input
+                id="endDate"
+                type="date"
+                value={endDate}
+                onChange={(event) => setEndDate(event.target.value)}
+              />
+            </div>
           </div>
 
           {error ? (
@@ -332,74 +393,182 @@ export default function TermsPage() {
             </div>
           ) : null}
 
-          {hasInvalidRows ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-              Some rows are invalid. Name and Role are required before import.
-            </div>
-          ) : null}
-
-          <PreviewTable
-            rows={previewRows}
-            hasRequiredColumns={hasRequiredColumns}
-            isLoading={isParsing}
-          />
-
-          <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+          <div className="flex justify-end">
             <Button
-              className="bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50"
-              onClick={handleDownloadTemplate}
+              type="submit"
+              disabled={isCreating || !termName.trim() || !startDate || !endDate}
             >
-              Download Template
-            </Button>
-            <Button
-              onClick={() => void handleSubmitClick()}
-              disabled={
-                isSubmitting ||
-                isParsing ||
-                !termName.trim() ||
-                !file ||
-                previewRows.length === 0
-              }
-            >
-              {isSubmitting ? "Importing..." : "Submit Import"}
+              {isCreating ? "Creating..." : "Create Term"}
             </Button>
           </div>
-        </div>
+        </form>
       </Card>
 
-      {credentials.length > 0 ? (
-        <Card>
-          <div className="space-y-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Generated Credentials
-                </h2>
-                <p className="text-sm text-slate-500">
-                  These credentials are shown once after import.
-                </p>
-              </div>
+      <Card>
+        <form onSubmit={handleAssignUserToActiveTerm} className="space-y-4">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Assign User to Active Term
+            </h2>
+            <p className="text-sm text-slate-500">
+              Assign a user role for the currently active term.
+            </p>
+          </div>
 
-              <Button onClick={handleDownloadCredentials}>
-                Download Excel
-              </Button>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <label
+                htmlFor="assignUserId"
+                className="text-sm font-medium text-slate-700"
+              >
+                Select User
+              </label>
+              <select
+                id="assignUserId"
+                value={assignForm.userId}
+                onChange={(event) =>
+                  setAssignForm((current) => ({
+                    ...current,
+                    userId: event.target.value,
+                    errorMessage: null,
+                    successMessage: null,
+                  }))
+                }
+                className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-900"
+              >
+                <option value="">Choose a user</option>
+                {isUsersLoading ? (
+                  <option value="" disabled>
+                    Loading users...
+                  </option>
+                ) : (
+                  users.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name}
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
 
-            <CredentialsTable rows={credentials} />
+            <div className="space-y-2">
+              <label
+                htmlFor="assignRole"
+                className="text-sm font-medium text-slate-700"
+              >
+                Select Role
+              </label>
+              <select
+                id="assignRole"
+                value={assignForm.role}
+                onChange={(event) =>
+                  setAssignForm((current) => ({
+                    ...current,
+                    role: event.target.value,
+                  }))
+                }
+                className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-900"
+              >
+                <option value="ADMIN">ADMIN</option>
+                <option value="MEMBER">MEMBER</option>
+                <option value="VISITOR">VISITOR</option>
+              </select>
+            </div>
           </div>
-        </Card>
-      ) : null}
 
-      <ConfirmModal
-        isOpen={showConfirm}
-        title="Replace Active Term?"
-        description="An active term already exists. Creating a new term will deactivate the current term. Do you want to continue?"
-        confirmLabel={isSubmitting ? "Processing..." : "Continue"}
-        cancelLabel="Cancel"
-        onCancel={() => setShowConfirm(false)}
-        onConfirm={() => void handleImport()}
-        isLoading={isSubmitting}
-      />
+          <div className="flex justify-end">
+            <Button
+              type="submit"
+              disabled={
+                assignForm.loading ||
+                !assignForm.userId ||
+                !assignForm.role ||
+                !activeTerm
+              }
+            >
+              {assignForm.loading ? "Assigning..." : "Assign User"}
+            </Button>
+          </div>
+
+          {assignForm.successMessage ? (
+            <p className="text-sm text-green-600">{assignForm.successMessage}</p>
+          ) : null}
+          {assignForm.errorMessage ? (
+            <p className="text-sm text-red-600">{assignForm.errorMessage}</p>
+          ) : null}
+        </form>
+      </Card>
+
+      <Card>
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold text-slate-900">All Terms</h2>
+          <p className="text-sm text-slate-500">
+            Active Term:{" "}
+            {activeTerm
+              ? `${activeTerm.name} (${formatDate(activeTerm.startDate)} - ${formatDate(
+                  activeTerm.endDate
+                )})`
+              : "None"}
+          </p>
+
+          {isLoading ? (
+            <p className="text-sm text-slate-500">Loading terms...</p>
+          ) : terms.length === 0 ? (
+            <p className="text-sm text-slate-500">No terms found.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Start Date</TableHead>
+                  <TableHead>End Date</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {terms.map((term) => (
+                  <TableRow
+                    key={term.id}
+                    className={term.isActive ? "bg-emerald-50/60" : ""}
+                  >
+                    <TableCell className="font-medium text-slate-900">
+                      {term.name}
+                    </TableCell>
+                    <TableCell>{formatDate(term.startDate)}</TableCell>
+                    <TableCell>{formatDate(term.endDate)}</TableCell>
+                    <TableCell>
+                      <span
+                        className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                          term.isActive
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {term.isActive ? "Active" : "Inactive"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {term.isActive ? (
+                        <Button disabled>Active</Button>
+                      ) : (
+                        <Button
+                          onClick={() => void handleActivateTerm(term.id)}
+                          disabled={activatingId === term.id}
+                        >
+                          {activatingId === term.id
+                            ? "Activating..."
+                            : "Activate"}
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }

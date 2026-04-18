@@ -83,16 +83,19 @@ export default function LeaderboardAnalytics({
         {
           title: "Top Performer",
           value: topPerformerLabel,
-          subtitle: topPerformer ? formatNumericValue(topPerformer.points) : "No data yet",
-          icon: "🏆",
-          className: "bg-gradient-to-r from-yellow-50 to-yellow-100 ring-yellow-200",
+          subtitle: topPerformer
+            ? formatNumericValue(topPerformer.points)
+            : "No data yet",
+          icon: "TP",
+          className:
+            "bg-gradient-to-r from-yellow-50 to-yellow-100 ring-yellow-200",
           isNumeric: false,
         },
         {
           title: "Total Points",
           value: totalPoints,
           subtitle: "Across current results",
-          icon: "📈",
+          icon: "PT",
           className: "bg-white",
           isNumeric: true,
         },
@@ -100,7 +103,7 @@ export default function LeaderboardAnalytics({
           title: "Total Activities",
           value: totalActivities,
           subtitle: "Sum of breakdown metrics",
-          icon: "⚡",
+          icon: "AC",
           className: "bg-white",
           isNumeric: true,
         },
@@ -108,7 +111,7 @@ export default function LeaderboardAnalytics({
           title: "Average Score",
           value: safeAverage,
           subtitle: `Per ${view}`,
-          icon: "📊",
+          icon: "AV",
           className: "bg-white",
           isNumeric: true,
         },
@@ -118,15 +121,16 @@ export default function LeaderboardAnalytics({
           title: "Top Performer",
           value: "--",
           subtitle: "No data yet",
-          icon: "🏆",
-          className: "bg-gradient-to-r from-yellow-50 to-yellow-100 ring-yellow-200",
+          icon: "TP",
+          className:
+            "bg-gradient-to-r from-yellow-50 to-yellow-100 ring-yellow-200",
           isNumeric: false,
         },
         {
           title: "Total Points",
           value: "--",
           subtitle: "No data yet",
-          icon: "📈",
+          icon: "PT",
           className: "bg-white",
           isNumeric: false,
         },
@@ -134,7 +138,7 @@ export default function LeaderboardAnalytics({
           title: "Total Activities",
           value: "--",
           subtitle: "No data yet",
-          icon: "⚡",
+          icon: "AC",
           className: "bg-white",
           isNumeric: false,
         },
@@ -142,7 +146,7 @@ export default function LeaderboardAnalytics({
           title: "Average Score",
           value: "--",
           subtitle: "No data yet",
-          icon: "📊",
+          icon: "AV",
           className: "bg-white",
           isNumeric: false,
         },
@@ -160,7 +164,7 @@ export default function LeaderboardAnalytics({
         >
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-slate-500">{card.title}</p>
-            <span className="rounded-full bg-slate-100 p-2 text-lg">
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
               {card.icon}
             </span>
           </div>

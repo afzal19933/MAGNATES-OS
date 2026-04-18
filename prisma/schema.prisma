@@ -12,10 +12,17 @@ enum AskStatus {
   FULFILLED
 }
 
+enum TermUserRole {
+  ADMIN
+  MEMBER
+  VISITOR
+}
+
 model Member {
-  id   String @id @default(cuid())
-  name String
-  asks Ask[]
+  id        String     @id @default(cuid())
+  name      String
+  asks      Ask[]
+  termUsers TermUser[]
 }
 
 model Ask {
@@ -37,7 +44,7 @@ model Upload {
 }
 
 model Referral {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   fromName     String
   toName       String
   description  String?
@@ -54,5 +61,33 @@ model Referral {
   fromMemberId String?
   toMemberId   String?
   uploadId     String
-  createdAt    DateTime @default(now())
+  createdAt    DateTime  @default(now())
+}
+
+model Term {
+  id        String     @id @default(cuid())
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean    @default(false)
+  activeKey String?    @unique
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  termUsers TermUser[]
+
+  @@index([isActive])
+  @@index([startDate, endDate])
+}
+
+model TermUser {
+  userId    String
+  termId    String
+  role      TermUserRole
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  user      Member       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  term      Term         @relation(fields: [termId], references: [id], onDelete: Cascade)
+
+  @@id([userId, termId])
+  @@index([termId, role])
 }

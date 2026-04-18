@@ -1,286 +1,222 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getScoringPointsMap } from "@/lib/scoring";
 
-const TERM_START = new Date("2026-09-01");
-const TERM_END = new Date("2026-12-31");
+export const dynamic = "force-dynamic";
+
+type LeaderboardType = "weekly" | "monthly" | "term";
+type LeaderboardView = "member" | "team";
+
+function resolveDateRangeForRollingViews(type: Exclude<LeaderboardType, "term">) {
+  const now = new Date();
+
+  if (type === "monthly") {
+    return {
+      gte: new Date(now.getFullYear(), now.getMonth(), 1),
+      lte: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999),
+    };
+  }
+
+  const endDate = new Date(now);
+  endDate.setHours(23, 59, 59, 999);
+
+  const startDate = new Date(now);
+  startDate.setDate(now.getDate() - 6);
+  startDate.setHours(0, 0, 0, 0);
+
+  return {
+    gte: startDate,
+    lte: endDate,
+  };
+}
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const type = searchParams.get("type") || "weekly";
-    const view = searchParams.get("view") || "member";
+    const type = (searchParams.get("type") || "weekly") as LeaderboardType;
+    const view = (searchParams.get("view") || "member") as LeaderboardView;
+    const scoringMap = getScoringPointsMap();
+    const referralGivenPoints = scoringMap.get("referralGiven") || 0;
+    const referralReceivedPoints = scoringMap.get("referralReceived") || 0;
+    let activeTerm:
+      | {
+          id: string;
+          name: string;
+          startDate: Date;
+          endDate: Date;
+        }
+      | null = null;
 
-    const now = new Date();
-
-    let startDate: Date | undefined;
-    let endDate: Date | undefined;
-
-    const config = await prisma.systemConfig.findFirst({
-      where: { key: "meetingDay" },
-    });
-
-    const meetingDay =
-      config && !isNaN(Number(config.value))
-        ? Number(config.value)
-        : 3;
-
-    if (type === "weekly") {
-      const today = new Date();
-      const currentDay = today.getDay();
-
-      let daysSinceMeeting = currentDay - meetingDay;
-
-      if (daysSinceMeeting <= 0) {
-        daysSinceMeeting += 7;
-      }
-
-      endDate = new Date(today);
-      endDate.setDate(today.getDate() - daysSinceMeeting);
-      endDate.setHours(23, 59, 59, 999);
-
-      startDate = new Date(endDate);
-      startDate.setDate(endDate.getDate() - 6);
-      startDate.setHours(0, 0, 0, 0);
-    }
-
-    if (type === "monthly") {
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      endDate.setHours(23, 59, 59, 999);
-    }
-
-    const dateFilter =
+    const createdAt =
       type === "term"
+        ? undefined
+        : resolveDateRangeForRollingViews(type);
+
+    if (type === "term") {
+      activeTerm = await prisma.term.findFirst({
+        where: {
+          isActive: true,
+        },
+        select: {
+          id: true,
+          name: true,
+          startDate: true,
+          endDate: true,
+        },
+        orderBy: {
+          updatedAt: "desc",
+        },
+      });
+
+      if (!activeTerm) {
+        return NextResponse.json({
+          success: true,
+          type,
+          view,
+          data: [],
+          message: "No active term found.",
+        });
+      }
+    }
+
+    const effectiveCreatedAt =
+      type === "term" && activeTerm
         ? {
-            createdAt: {
-              gte: TERM_START,
-              lte: TERM_END,
-            },
+            gte: activeTerm.startDate,
+            lte: activeTerm.endDate,
           }
-        : startDate && endDate
-          ? {
-              createdAt: {
-                gte: startDate,
-                lte: endDate,
-              },
-            }
-          : undefined;
+        : createdAt;
 
-    const scoringRules = await prisma.scoringRule.findMany();
+    const [members, referralsGiven, referralsReceived] = await Promise.all([
+      prisma.member.findMany({
+        select: {
+          id: true,
+          name: true,
+        },
+        orderBy: {
+          name: "asc",
+        },
+      }),
+      prisma.referral.groupBy({
+        by: ["fromMemberId"],
+        where: {
+          createdAt: effectiveCreatedAt,
+          fromMemberId: {
+            not: null,
+          },
+        },
+        _count: {
+          fromMemberId: true,
+        },
+      }),
+      prisma.referral.groupBy({
+        by: ["toMemberId"],
+        where: {
+          createdAt: effectiveCreatedAt,
+          toMemberId: {
+            not: null,
+          },
+        },
+        _count: {
+          toMemberId: true,
+        },
+      }),
+    ]);
 
-    const scoringMap = new Map(
-      scoringRules.map((rule) => [rule.key, rule.points])
+    const givenMap = new Map<string, number>(
+      referralsGiven
+        .filter(
+          (
+            item
+          ): item is typeof item & {
+            fromMemberId: string;
+          } => typeof item.fromMemberId === "string"
+        )
+        .map((item) => [item.fromMemberId, item._count.fromMemberId])
     );
 
-    const pointsCache: Record<string, number> = {};
-
-    function getPoints(key: string) {
-      if (!(key in pointsCache)) {
-        pointsCache[key] = scoringMap.get(key) || 0;
-      }
-      return pointsCache[key];
-    }
-
-    const members = await prisma.member.findMany({
-      select: {
-        id: true,
-        name: true,
-        powerTeam: true,
-      },
-    });
-
-    const memberMap = new Map(
-      members.map((m) => [m.id, m])
+    const receivedMap = new Map<string, number>(
+      referralsReceived
+        .filter(
+          (
+            item
+          ): item is typeof item & {
+            toMemberId: string;
+          } => typeof item.toMemberId === "string"
+        )
+        .map((item) => [item.toMemberId, item._count.toMemberId])
     );
 
-    const referralsGiven = await prisma.referral.groupBy({
-      by: ["fromMemberId"],
-      where: dateFilter || undefined,
-      _count: { fromMemberId: true },
-    });
+    const leaderboard = members
+      .map((member) => {
+        const referralsGivenCount = givenMap.get(member.id) || 0;
+        const referralsReceivedCount = receivedMap.get(member.id) || 0;
+        const referralPoints = referralsGivenCount * referralGivenPoints;
+        const receivedPoints =
+          referralsReceivedCount * referralReceivedPoints;
+        const points = referralPoints + receivedPoints;
 
-    const referralsReceived = await prisma.referral.groupBy({
-      by: ["toMemberId"],
-      where: dateFilter || undefined,
-      _count: { toMemberId: true },
-    });
+        return {
+          id: member.id,
+          memberId: member.id,
+          name: member.name,
+          team: "Chapter",
+          referralsGiven: referralsGivenCount,
+          referralsReceived: referralsReceivedCount,
+          breakdown: {
+            referralPoints,
+            receivedPoints,
+          },
+          points,
+        };
+      })
+      .sort((a, b) => {
+        if (b.points !== a.points) {
+          return b.points - a.points;
+        }
 
-    const activities = await prisma.activityLog.groupBy({
-      by: ["memberId", "type"],
-      where: dateFilter || undefined,
-      _count: { type: true },
-    });
+        if (b.referralsGiven !== a.referralsGiven) {
+          return b.referralsGiven - a.referralsGiven;
+        }
 
-    const activityMap = new Map<
-      number,
-      Record<string, number>
-    >();
+        if (b.referralsReceived !== a.referralsReceived) {
+          return b.referralsReceived - a.referralsReceived;
+        }
 
-    for (const a of activities) {
-      if (!activityMap.has(a.memberId)) {
-        activityMap.set(a.memberId, {});
-      }
+        return a.name.localeCompare(b.name);
+      });
 
-      const memberActivity = activityMap.get(a.memberId)!;
-      if (a.type) {
-        memberActivity[a.type] = a._count.type;
-      }
-    }
-
-    const inductions = await prisma.member.groupBy({
-      by: ["powerTeam"],
-      where: dateFilter || undefined,
-      _count: { id: true },
-    });
-
-    const inductionMap = new Map(
-      inductions.map((i) => [i.powerTeam || "Unassigned", i._count.id])
-    );
-
-    const inductionBonus = getPoints("teamInductionBonus") || 100;
-    const inductionPenalty = getPoints("teamInductionPenalty") || -100;
-    const inductionThreshold = getPoints("teamInductionThreshold") || 2;
-
-    const givenMap = new Map<number, number>(
-      referralsGiven.map((item) => [item.fromMemberId!, item._count.fromMemberId])
-    );
-
-    const receivedMap = new Map<number, number>(
-      referralsReceived.map((item) => [item.toMemberId!, item._count.toMemberId])
-    );
-
-    const leaderboard = members.map((member) => {
-      const referralsGivenCount = givenMap.get(member.id) || 0;
-      const referralsReceivedCount = receivedMap.get(member.id) || 0;
-      const referralPoints = referralsGivenCount * getPoints("referralGiven");
-      const memberActivity = activityMap.get(member.id) || {};
-      const visitorPoints =
-        (memberActivity["visitor"] || 0) * getPoints("bringingVisitors");
-      const meetingPoints =
-        (memberActivity["meeting"] || 0) * getPoints("ptMeetingAttendance");
-      const trainingPoints =
-        (memberActivity["training"] || 0) * getPoints("attendingTrainings");
-      const oneToOneWithinPTPoints =
-        (memberActivity["oneToOneWithinPT"] || 0) * getPoints("oneToOneWithinPT");
-      const oneToOneOtherPTPoints =
-        (memberActivity["oneToOneOtherPT"] || 0) * getPoints("oneToOneOtherPT");
-      const oneToOneCrossChapterPoints =
-        (memberActivity["oneToOneCrossChapter"] || 0) * getPoints("oneToOneCrossChapter");
-      const preNetworkingPoints =
-        (memberActivity["preNetworking"] || 0) * getPoints("preNetworking");
-      const specificAskPoints =
-        (memberActivity["specificAskConnected"] || 0) * getPoints("specificAskConnected");
-      const etiquettePoints =
-        (memberActivity["etiquette"] || 0) * getPoints("etiquette");
-      const groupPitchPoints =
-        (memberActivity["groupPitch"] || 0) * getPoints("groupPitch");
-      const breakdown: Record<string, number> = {
-        referralPoints,
-        visitorPoints,
-        meetingPoints,
-        trainingPoints,
-        oneToOneWithinPTPoints,
-        oneToOneOtherPTPoints,
-        oneToOneCrossChapterPoints,
-        preNetworkingPoints,
-        specificAskPoints,
-        etiquettePoints,
-        groupPitchPoints,
-      };
-      const points = Object.values(breakdown).reduce(
-        (sum, val) => sum + val,
-        0
-      );
-
-      return {
-        memberId: member.id,
-        name: member.name,
-        referralsGiven: referralsGivenCount,
-        referralsReceived: referralsReceivedCount,
-        breakdown,
-        points,
-      };
-    });
-
-    leaderboard.sort((a, b) => {
-      if (b.points !== a.points) return b.points - a.points;
-      if (b.referralsGiven !== a.referralsGiven)
-        return b.referralsGiven - a.referralsGiven;
-      if (b.referralsReceived !== a.referralsReceived)
-        return b.referralsReceived - a.referralsReceived;
-      return a.name.localeCompare(b.name);
-    });
-
-    const ranked = leaderboard.map((item, index) => ({
+    const memberResults = leaderboard.map((item, index) => ({
       rank: index + 1,
       ...item,
     }));
 
-    let result;
-
-    if (view === "team") {
-      const teamMap = new Map<
-        string,
-        {
-          team: string;
-          points: number;
-          referralsGiven: number;
-          referralsReceived: number;
-        }
-      >();
-
-      for (const member of leaderboard) {
-        const team =
-          (memberMap.get(member.memberId)?.powerTeam || "Unassigned").trim() || "Unassigned";
-
-        if (!teamMap.has(team)) {
-          teamMap.set(team, {
-            team,
-            points: 0,
-            referralsGiven: 0,
-            referralsReceived: 0,
-          });
-        }
-
-        const teamData = teamMap.get(team)!;
-
-        teamData.points += member.points;
-        teamData.referralsGiven += member.referralsGiven;
-        teamData.referralsReceived += member.referralsReceived;
-      }
-
-      for (const team of teamMap.values()) {
-        const count = inductionMap.get(team.team) || 0;
-
-        if (count >= inductionThreshold) {
-          team.points += inductionBonus;
-        } else {
-          team.points += inductionPenalty;
-        }
-      }
-
-      const teamLeaderboard = Array.from(teamMap.values());
-
-      teamLeaderboard.sort(
-        (a, b) =>
-          b.points - a.points ||
-          b.referralsGiven - a.referralsGiven ||
-          b.referralsReceived - a.referralsReceived
-      );
-
-      result = teamLeaderboard.map((team, index) => ({
-        rank: index + 1,
-        ...team,
-      }));
-    } else {
-      result = ranked;
-    }
+    const teamResults =
+      leaderboard.length === 0
+        ? []
+        : [
+            {
+              id: "chapter-team",
+              rank: 1,
+              team: "Chapter",
+              points: leaderboard.reduce((sum, member) => sum + member.points, 0),
+              referralsGiven: leaderboard.reduce(
+                (sum, member) => sum + member.referralsGiven,
+                0
+              ),
+              referralsReceived: leaderboard.reduce(
+                (sum, member) => sum + member.referralsReceived,
+                0
+              ),
+            },
+          ];
 
     return NextResponse.json({
       success: true,
       type,
       view,
-      data: result,
+      activeTerm,
+      data: view === "team" ? teamResults : memberResults,
     });
   } catch {
     return NextResponse.json(

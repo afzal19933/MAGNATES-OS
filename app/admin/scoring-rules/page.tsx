@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 type ScoringRule = {
   id: number;
+  key: string;
   name: string;
   points: number;
 };
@@ -28,7 +29,11 @@ export default function ScoringRulesPage() {
           cache: "no-store",
         });
         const data = (await response.json()) as ScoringRule[];
-        setRules(data);
+        setRules(Array.isArray(data) ? data : []);
+        setMessage("");
+      } catch {
+        setRules([]);
+        setMessage("Failed to load scoring rules.");
       } finally {
         setIsLoading(false);
       }
@@ -78,6 +83,8 @@ export default function ScoringRulesPage() {
       });
 
       if (!response.ok) {
+        const result = (await response.json()) as { message?: string };
+        setMessage(result.message || "Unable to save scoring rules.");
         return;
       }
 
