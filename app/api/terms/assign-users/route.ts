@@ -76,7 +76,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.member.findUnique({
       where: {
         id: userId,
       },
